@@ -1,0 +1,158 @@
+{
+    "Description": "AWS Cloudformation Stack to setup AWS usage daily report",
+    "Parameters": {
+        "FromEmail": {
+            "AllowedPattern": "^\\s*[^\\s@]+@[^\\s@]+\\.[^\\s@]+\\s*$",
+            "ConstraintDescription": "Must be valid email id",
+            "Description": "Sender Email Id. Example: admin@example.com",
+            "Type": "String"
+        },
+        "Schedule": {
+            "Default": "19",
+            "Description": "Hour of the day when email should be sent. Default=19 hrs",
+            "MaxValue": "23",
+            "MinValue": "0",
+            "Type": "Number"
+        },
+        "SesRegion": {
+            "AllowedValues": [
+                "us-east-1",
+                "us-west-2",
+                "eu-west-1"
+            ],
+            "Default": "us-east-1",
+            "Description": "AWS Region for sending email using SES service",
+            "Type": "String"
+        },
+        "ToEmail": {
+            "AllowedPattern": "^(\\s*[^\\s@]+@[^\\s@]+\\.[^\\s@]+\\s*,?)+$",
+            "ConstraintDescription": "Must be valid email ids (comma separated)",
+            "Description": "Receiver Email Id(s). Example: user1@example.com,user2@example.com",
+            "Type": "String"
+        }
+    },
+    "Resources": {
+        "AWSUsageLambdaFunction": {
+            "Properties": {
+                "Code": {
+                    "S3Bucket": "kvriksh-aws-usage",
+                    "S3Key": "lambda_function_code.zip"
+                },
+                "Environment": {
+                    "Variables": {
+                        "RECV_EMAIL": {
+                            "Ref": "ToEmail"
+                        },
+                        "SENDER_EMAIL": {
+                            "Ref": "FromEmail"
+                        },
+                        "SES_REGION": {
+                            "Ref": "SesRegion"
+                        }
+                    }
+                },
+                "Handler": "inventory.lambda_handler",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "AWSUsageLambdaFunctionIamRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "python2.7",
+                "Timeout": "900"
+            },
+            "Type": "AWS::Lambda::Function"
+        },
+        "AWSUsageLambdaFunctionIamRole": {
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Action": [
+                                        "ec2:DescribeInstances",
+                                        "ec2:DescribeAddresses",
+                                        "ec2:DescribeRegions",
+                                        "ec2:DescribeVolumes",
+                                        "pricing:GetProducts"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Action": [
+                                        "ses:SendRawEmail",
+                                        "ses:ListIdentities",
+                                        "ses:ListVerifiedEmailAddresses",
+                                        "ses:VerifyEmailAddress"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": "*"
+                                },
+								{
+									"Effect": "Allow",
+									"Action": [
+										"logs:CreateLogGroup",
+										"logs:CreateLogStream",
+										"logs:PutLogEvents"
+									],
+									"Resource": "*"
+								}
+                            ],
+                            "Version": "2012-10-17"
+                        },
+                        "PolicyName": "AWSUsageLambdaFunctionPolicy"
+                    }
+                ]
+            },
+            "Type": "AWS::IAM::Role"
+        },
+        "EventRule": {
+            "Properties": {
+                "Description": "CloudWatch Event to trigger AWS Usage Lambda function",
+                "ScheduleExpression": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "cron(0 ",
+                            {
+                                "Ref": "Schedule"
+                            },
+                            " * * ? *)"
+                        ]
+                    ]
+                },
+                "State": "ENABLED",
+                "Targets": [
+                    {
+                        "Arn": {
+                            "Fn::GetAtt": [
+                                "AWSUsageLambdaFunction",
+                                "Arn"
+                            ]
+                        },
+                        "Id": "AWSUsageLambdaFunctionId"
+                    }
+                ]
+            },
+            "Type": "AWS::Events::Rule"
+        }
+    }
+}
